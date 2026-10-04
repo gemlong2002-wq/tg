@@ -75,37 +75,32 @@
   #setup .card { width: 100%; max-width: 360px; background: var(--board); border: 6px solid var(--frame); border-radius: 12px; padding: 20px; }
   #setup h1 { margin: 0 0 4px; font-size: 22px; }
   #setup p { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
-  .roles { display: flex; gap: 10px; margin-bottom: 14px; }
-  .roles button { flex: 1; padding: 14px; font-size: 17px; background: var(--board-dark); color: var(--chalk); border: 2px solid transparent; }
-  .roles button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
   #setup label { display: block; font-size: 14px; margin-bottom: 6px; }
-  #secretInput { width: 100%; padding: 12px; font-size: 16px; border-radius: 10px; border: 1px solid rgba(244,241,232,.35); background: var(--board-dark); color: var(--chalk); }
+  #pinInput { width: 100%; padding: 12px; font-size: 24px; letter-spacing: 8px; text-align: center; border-radius: 10px; border: 1px solid rgba(244,241,232,.35); background: var(--board-dark); color: var(--chalk); }
   #setupError { color: var(--danger); font-size: 14px; min-height: 20px; margin: 8px 0; }
   #setup .btn-primary { width: 100%; padding: 14px; font-size: 17px; }
 </style>
 </head>
 <body>
 
-<!-- 首次設定 / 重設身分 -->
+<!-- 首次使用 / 登出後:輸入密碼 -->
 <div id="setup" class="hidden">
   <div class="card">
     <h1>手寫黑板</h1>
-    <p>第一次使用,請選擇你的身分並輸入共用通關碼。</p>
-    <div class="roles">
-      <button type="button" data-role="husband" aria-pressed="false">老公</button>
-      <button type="button" data-role="wife" aria-pressed="false">老婆</button>
-    </div>
-    <label for="secretInput">共用通關碼</label>
-    <input id="secretInput" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
-    <div id="setupError"></div>
-    <button type="button" id="setupDone" class="btn-primary">開始使用</button>
+    <p>請輸入你的 4 位數字密碼。</p>
+    <form id="setupForm" novalidate>
+      <label for="pinInput">密碼</label>
+      <input id="pinInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" spellcheck="false">
+      <div id="setupError"></div>
+      <button type="submit" id="setupDone" class="btn-primary">進入</button>
+    </form>
   </div>
 </div>
 
 <header>
   <span id="mockBadge" class="badge hidden">測試模式</span>
   <span class="who" id="whoLabel"></span>
-  <button type="button" id="resetBtn" class="btn-ghost">重設身分</button>
+  <button type="button" id="resetBtn" class="btn-ghost">登出</button>
 </header>
 
 <section id="inbox">
@@ -139,7 +134,8 @@ const GAS_URL = '';
 const MOCK = GAS_URL === '';
 const EXPORT_WIDTH = 600;          // 送出圖片寬度(px)
 const REQUEST_TIMEOUT_MS = 20000;
-const LS = { role: 'tg_role', secret: 'tg_secret' };
+const LS = { pin: 'tg_pin', identity: 'tg_identity' };
+const LEGACY_KEYS = ['tg_role', 'tg_secret'];   // Task 1 舊版(選身分 + 共用通關碼)存的資料
 const ROLE_NAME = { husband: '老公', wife: '老婆' };
 const OTHER = { husband: 'wife', wife: 'husband' };
 
@@ -159,7 +155,7 @@ async function callBackend(payload) {
     if (!res.ok) throw new Error('伺服器回應 ' + res.status);
     let data;
     try { data = await res.json(); } catch { throw new Error('伺服器回應格式錯誤'); }
-    if (!data.ok) throw new Error(errorText(data.error));
+    if (!data.ok) throw new Error(data.error || '伺服器錯誤');
     return data;
   } catch (err) {
     if (err.name === 'AbortError') throw new Error('連線逾時');
@@ -170,35 +166,27 @@ async function callBackend(payload) {
   }
 }
 
-function errorText(code) {
-  return ({
-    unauthorized: '通關碼錯誤,請按「重設身分」重新輸入',
-    server_not_configured: '後端尚未設定通關碼',
-    bad_role: '身分資料錯誤',
-    bad_image: '圖片資料錯誤',
-    image_too_large: '圖片太大',
-    unknown_action: '未知的操作',
-  })[code] || ('伺服器錯誤:' + (code || '未知'));
-}
-
 // MOCK:資料存在 localStorage 的 mock_latest_to_husband / mock_latest_to_wife。
+// 測試密碼(僅測試模式用):1111 = 老公、2222 = 老婆。
 // 模擬失敗:網址加 ?mockfail=read 或 ?mockfail=send(或兩者 ?mockfail=read,send)。
 function mockBackend(payload) {
   const fails = (new URLSearchParams(location.search).get('mockfail') || '').split(',');
   return new Promise((resolve, reject) => {
     setTimeout(() => {
       try {
+        const identity = { '1111': 'husband', '2222': 'wife' }[payload.secret];
+        if (!identity) return reject(new Error('密碼錯誤'));
         if (payload.action === 'getLatest') {
           if (fails.includes('read')) return reject(new Error('(模擬)讀取失敗'));
-          const raw = localStorage.getItem('mock_latest_to_' + payload.role);
+          const raw = localStorage.getItem('mock_latest_to_' + identity);
           const rec = raw ? JSON.parse(raw) : null;
-          return resolve({ ok: true, image: rec ? rec.image : null, ts: rec ? rec.ts : null });
+          return resolve({ ok: true, identity, image: rec ? rec.image : null, ts: rec ? rec.ts : null });
         }
         if (payload.action === 'saveDrawing') {
           if (fails.includes('send')) return reject(new Error('(模擬)送出失敗'));
           const ts = Date.now();
-          localStorage.setItem('mock_latest_to_' + OTHER[payload.role], JSON.stringify({ image: payload.image, ts }));
-          return resolve({ ok: true, ts });
+          localStorage.setItem('mock_latest_to_' + OTHER[identity], JSON.stringify({ image: payload.image, ts }));
+          return resolve({ ok: true, identity, ts });
         }
         reject(new Error('未知的操作'));
       } catch (err) { reject(err); }
@@ -208,40 +196,51 @@ function mockBackend(payload) {
 
 // ===== 身分設定 =====
 const $ = (id) => document.getElementById(id);
-let role = localStorage.getItem(LS.role);
-let secret = localStorage.getItem(LS.secret);
-let pickedRole = null;
+// 偵測到 Task 1 舊版資料就整組清掉,回到輸入密碼畫面
+if (LEGACY_KEYS.some(k => localStorage.getItem(k) !== null)) {
+  LEGACY_KEYS.concat([LS.pin, LS.identity]).forEach(k => localStorage.removeItem(k));
+}
+let secret = localStorage.getItem(LS.pin);          // 自己的密碼
+let role = localStorage.getItem(LS.identity);       // 身分只由後端決定,這裡只是顯示用的快取
+if (!ROLE_NAME[role]) role = null;
+let verifying = false;
 
 function showSetup() {
-  pickedRole = null;
-  document.querySelectorAll('.roles button').forEach(b => b.setAttribute('aria-pressed', 'false'));
-  $('secretInput').value = '';
+  $('pinInput').value = '';
   $('setupError').textContent = '';
   $('setup').classList.remove('hidden');
 }
 
-document.querySelectorAll('.roles button').forEach(btn => {
-  btn.addEventListener('click', () => {
-    pickedRole = btn.dataset.role;
-    document.querySelectorAll('.roles button').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
-  });
-});
-
-$('setupDone').addEventListener('click', () => {
-  const s = $('secretInput').value.trim();
-  if (!pickedRole) { $('setupError').textContent = '請選擇身分'; return; }
-  if (!s) { $('setupError').textContent = '請輸入通關碼'; return; }
-  role = pickedRole; secret = s;
-  localStorage.setItem(LS.role, role);
-  localStorage.setItem(LS.secret, secret);
-  $('setup').classList.add('hidden');
-  applyIdentity();
-  loadLatest();
+// 送出密碼時先呼叫 getLatest 驗證,成功才儲存
+$('setupForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (verifying) return;
+  const pin = $('pinInput').value.trim();
+  if (!/^\d{4}$/.test(pin)) { $('setupError').textContent = '請輸入 4 位數字密碼'; return; }
+  verifying = true;
+  $('setupDone').disabled = true; $('setupDone').textContent = '確認中…';
+  $('setupError').textContent = '';
+  try {
+    const data = await callBackend({ action: 'getLatest', secret: pin });
+    if (!ROLE_NAME[data.identity]) throw new Error('後端回應缺少身分');
+    secret = pin; role = data.identity;
+    localStorage.setItem(LS.pin, secret);
+    localStorage.setItem(LS.identity, role);
+    $('setup').classList.add('hidden');
+    applyIdentity();
+    showLatest(data.image, data.ts);
+    showStatus('你是' + ROLE_NAME[role], 'info');
+  } catch (err) {
+    $('setupError').textContent = err.message;
+  } finally {
+    verifying = false;
+    $('setupDone').disabled = false; $('setupDone').textContent = '進入';
+  }
 });
 
 $('resetBtn').addEventListener('click', () => {
-  localStorage.removeItem(LS.role);
-  localStorage.removeItem(LS.secret);
+  localStorage.removeItem(LS.pin);
+  localStorage.removeItem(LS.identity);
   role = null; secret = null;
   loadSeq++; loading = false;   // 丟棄舊身分還在進行中的讀取
   $('loadingMsg').classList.add('hidden');
@@ -252,7 +251,7 @@ $('resetBtn').addEventListener('click', () => {
 });
 
 function applyIdentity() {
-  $('whoLabel').textContent = role ? '我是' + ROLE_NAME[role] : '';
+  $('whoLabel').textContent = role ? '你是' + ROLE_NAME[role] : '';
   $('inboxTitle').textContent = role ? ROLE_NAME[OTHER[role]] + '傳給我的最新一張' : '對方傳給我的最新一張';
 }
 
@@ -295,18 +294,24 @@ function showLatest(image, ts) {
   }
 }
 async function loadLatest() {
-  if (!role || !secret || loading) return;
+  if (!secret || loading) return;
   loading = true;
   const seq = ++loadSeq;
   $('loadingMsg').classList.remove('hidden');
   try {
-    const data = await callBackend({ action: 'getLatest', role, secret });
+    const data = await callBackend({ action: 'getLatest', secret });
     if (seq !== loadSeq) return;
+    if (ROLE_NAME[data.identity] && data.identity !== role) {
+      role = data.identity;
+      localStorage.setItem(LS.identity, role);
+      applyIdentity();
+    }
     showLatest(data.image, data.ts);
     if (retryAction === loadLatest) hideStatus();
   } catch (err) {
     if (seq !== loadSeq) return;
-    showStatus('讀取失敗:' + err.message, 'error', loadLatest);
+    const hint = err.message === '密碼錯誤' ? '(請按「登出」重新輸入)' : '';
+    showStatus('讀取失敗:' + err.message + hint, 'error', loadLatest);
   } finally {
     if (seq === loadSeq) {
       loading = false;
@@ -418,11 +423,11 @@ async function sendDrawing() {
   sending = true;
   $('sendBtn').disabled = true; $('clearBtn').disabled = true; $('resetBtn').disabled = true;
   $('sendBtn').textContent = '送出中…';
-  const recipient = ROLE_NAME[OTHER[role]];
+  const recipient = role ? ROLE_NAME[OTHER[role]] : '對方';
   try {
     const image = exportImage();
-    window.__lastPayloadBytes = JSON.stringify({ action: 'saveDrawing', role, secret, image }).length; // 供驗收量測
-    await callBackend({ action: 'saveDrawing', role, secret, image });
+    window.__lastPayloadBytes = JSON.stringify({ action: 'saveDrawing', secret, image }).length; // 供驗收量測
+    await callBackend({ action: 'saveDrawing', secret, image });
     clearBoard();
     showStatus('已送出給' + recipient + '!', 'info');
   } catch (err) {
@@ -439,7 +444,7 @@ $('sendBtn').addEventListener('click', sendDrawing);
 if (MOCK) $('mockBadge').classList.remove('hidden');
 resizeCanvas();
 applyIdentity();
-if (role && secret) loadLatest(); else showSetup();
+if (secret) loadLatest(); else showSetup();
 </script>
 </body>
 </html>
