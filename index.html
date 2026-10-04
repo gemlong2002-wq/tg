@@ -83,13 +83,13 @@
 </head>
 <body>
 
-<!-- 首次使用 / 登出後:輸入密碼 -->
+<!-- 首次使用 / 登出後:輸入身份碼 -->
 <div id="setup" class="hidden">
   <div class="card">
     <h1>手寫黑板</h1>
-    <p>請輸入你的 4 位數字密碼。</p>
+    <p>請輸入專屬身份碼(4 位數字)。</p>
     <form id="setupForm" novalidate>
-      <label for="pinInput">密碼</label>
+      <label for="pinInput">身份碼</label>
       <input id="pinInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" spellcheck="false">
       <div id="setupError"></div>
       <button type="submit" id="setupDone" class="btn-primary">進入</button>
@@ -139,9 +139,17 @@ const LEGACY_KEYS = ['tg_role', 'tg_secret'];   // Task 1 舊版(選身分 + 共
 const ROLE_NAME = { husband: '老公', wife: '老婆' };
 const OTHER = { husband: 'wife', wife: 'husband' };
 
+// 後端錯誤字串 → 畫面用語
+const USER_TEXT = {
+  '密碼錯誤': '身份碼錯誤',
+  '後端尚未設定密碼': '後端尚未設定身份碼',
+  '後端兩組密碼相同,請改成不同': '後端兩組身份碼相同,請改成不同',
+};
+const userText = (msg) => USER_TEXT[msg] || msg;
+
 // ===== 後端:真實 GAS 或 MOCK =====
 async function callBackend(payload) {
-  if (MOCK) return mockBackend(payload);
+  if (MOCK) return mockBackend(payload).catch((err) => { throw new Error(userText(err.message)); });
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -155,7 +163,7 @@ async function callBackend(payload) {
     if (!res.ok) throw new Error('伺服器回應 ' + res.status);
     let data;
     try { data = await res.json(); } catch { throw new Error('伺服器回應格式錯誤'); }
-    if (!data.ok) throw new Error(data.error || '伺服器錯誤');
+    if (!data.ok) throw new Error(userText(data.error) || '伺服器錯誤');
     return data;
   } catch (err) {
     if (err.name === 'AbortError') throw new Error('連線逾時');
@@ -216,7 +224,7 @@ $('setupForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   if (verifying) return;
   const pin = $('pinInput').value.trim();
-  if (!/^\d{4}$/.test(pin)) { $('setupError').textContent = '請輸入 4 位數字密碼'; return; }
+  if (!/^\d{4}$/.test(pin)) { $('setupError').textContent = '請輸入 4 位數字身份碼'; return; }
   verifying = true;
   $('setupDone').disabled = true; $('setupDone').textContent = '確認中…';
   $('setupError').textContent = '';
@@ -243,6 +251,7 @@ $('resetBtn').addEventListener('click', () => {
   localStorage.removeItem(LS.identity);
   role = null; secret = null;
   loadSeq++; loading = false;   // 丟棄舊身分還在進行中的讀取
+  autoFails = 0;
   $('loadingMsg').classList.add('hidden');
   applyIdentity();   // 清掉頁首「你是…」
   showLatest(null, null);
@@ -275,12 +284,18 @@ $('retryBtn').addEventListener('click', () => { if (retryAction) { $('retryBtn')
 // ===== 讀取對方最新一張 =====
 let loading = false;
 let loadSeq = 0;
+let shownKey = 'none';          // 目前上半部顯示的是哪一張(避免每 15 秒重畫同一張)
+let autoFails = 0;              // 自動更新連續失敗次數
+const POLL_MS = 15000;
+const AUTO_FAIL_LIMIT = 3;
 function formatTs(ts) {
   const d = new Date(Number(ts));
   if (isNaN(d)) return '';
   return d.toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
 }
+const latestKey = (image, ts) => image ? ts + ':' + image.length : 'none';
 function showLatest(image, ts) {
+  shownKey = latestKey(image, ts);
   const img = $('latestImg');
   if (image) {
     img.src = image.startsWith('data:') ? image : 'data:image/png;base64,' + image;
@@ -294,11 +309,13 @@ function showLatest(image, ts) {
     $('latestTs').textContent = '';
   }
 }
-async function loadLatest() {
-  if (!secret || loading) return;
+// auto = true:15 秒自動更新。失敗先不顯示,連續失敗 AUTO_FAIL_LIMIT 次才顯示錯誤與重試。
+async function loadLatest(auto) {
+  if (!secret) return;
+  if (loading) { if (!auto) $('retryBtn').disabled = false; return; }
   loading = true;
   const seq = ++loadSeq;
-  $('loadingMsg').classList.remove('hidden');
+  if (!auto) $('loadingMsg').classList.remove('hidden');
   try {
     const data = await callBackend({ action: 'getLatest', secret });
     if (seq !== loadSeq) return;
@@ -307,11 +324,14 @@ async function loadLatest() {
       localStorage.setItem(LS.identity, role);
       applyIdentity();
     }
-    showLatest(data.image, data.ts);
+    autoFails = 0;
+    if (latestKey(data.image, data.ts) !== shownKey) showLatest(data.image, data.ts);  // 有新圖才換
     if (retryAction === loadLatest) hideStatus();
   } catch (err) {
     if (seq !== loadSeq) return;
-    const hint = err.message === '密碼錯誤' ? '(請按「登出」重新輸入)' : '';
+    if (auto && ++autoFails < AUTO_FAIL_LIMIT) return;
+    if (auto && retryAction === sendDrawing) return;   // 不蓋掉「送出失敗」與它的重試
+    const hint = err.message === '身份碼錯誤' ? '(請按「登出」重新輸入)' : '';
     showStatus('讀取失敗:' + err.message + hint, 'error', loadLatest);
   } finally {
     if (seq === loadSeq) {
@@ -320,8 +340,16 @@ async function loadLatest() {
     }
   }
 }
+// 前景時每 15 秒自動更新;切到背景停止,回到前景立即抓一次並重新計時
+let pollTimer = null;
+function startPolling() {
+  clearInterval(pollTimer);
+  pollTimer = setInterval(() => loadLatest(true), POLL_MS);
+}
+function stopPolling() { clearInterval(pollTimer); pollTimer = null; }
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') loadLatest();
+  if (document.visibilityState === 'visible') { loadLatest(); startPolling(); }
+  else stopPolling();
 });
 
 // ===== 黑板畫布 =====
@@ -446,6 +474,7 @@ if (MOCK) $('mockBadge').classList.remove('hidden');
 resizeCanvas();
 applyIdentity();
 if (secret) loadLatest(); else showSetup();
+if (document.visibilityState === 'visible') startPolling();
 </script>
 </body>
 </html>

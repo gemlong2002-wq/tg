@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>複製小工具程式</title>
+<style>
+  :root { --board: #1f3d2b; --frame: #6b4a2b; --chalk: #f4f1e8; --muted: #b9c4b5; --accent: #f2d16b; --danger: #ff8a7a; --bg: #12241a; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--chalk);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", sans-serif; }
+  h1 { font-size: 20px; margin: 4px 0 8px; }
+  p { color: var(--muted); font-size: 15px; line-height: 1.5; margin: 0 0 14px; }
+  button { width: 100%; font: inherit; font-size: 18px; font-weight: 600; padding: 16px; border: none; border-radius: 12px;
+    background: var(--accent); color: #2a2208; cursor: pointer; }
+  button:disabled { opacity: .5; }
+  #msg { min-height: 24px; margin: 12px 0; font-size: 15px; }
+  #msg.ok { color: var(--accent); }
+  #msg.err { color: var(--danger); }
+  textarea { width: 100%; height: 40vh; background: var(--board); color: var(--chalk); border: 4px solid var(--frame);
+    border-radius: 8px; font: 12px/1.4 ui-monospace, Menlo, monospace; padding: 8px; }
+</style>
+</head>
+<body>
+  <h1>手寫黑板 小工具程式</h1>
+  <p>按下面的按鈕複製程式,再回 Scriptable 貼上(步驟見 SETUP.md)。</p>
+  <button type="button" id="copyBtn" disabled>載入中…</button>
+  <div id="msg"></div>
+  <textarea id="code" readonly spellcheck="false"></textarea>
+<script>
+const btn = document.getElementById('copyBtn');
+const msg = document.getElementById('msg');
+const box = document.getElementById('code');
+function say(text, kind) { msg.textContent = text; msg.className = kind; }
+
+fetch('tg-widget.js', { cache: 'no-store' })
+  .then((r) => { if (!r.ok) throw new Error(r.status); return r.text(); })
+  .then((code) => { box.value = code; btn.disabled = false; btn.textContent = '複製程式'; })
+  .catch(() => { btn.textContent = '載入失敗'; say('程式載入失敗,請重新整理這一頁。', 'err'); });
+
+btn.addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(box.value);
+  } catch (_) {
+    // 舊版瀏覽器備案
+    box.focus(); box.select(); box.setSelectionRange(0, box.value.length);
+    if (!document.execCommand('copy')) { say('自動複製失敗:請長按下方文字框 →「全選」→「拷貝」。', 'err'); return; }
+  }
+  say('已複製!回到 Scriptable 貼上。', 'ok');
+});
+</script>
+</body>
+</html>
