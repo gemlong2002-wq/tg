@@ -129,7 +129,7 @@
 <script>
 // ===== 設定 =====
 // 部署 GAS 後,把網頁應用程式網址貼在這裡。留空 = 測試模式(用本機 localStorage 模擬後端)。
-const GAS_URL = '';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbxAenuVguPrxFWWusOww7FUeMslEiSQy33xhSA2bu5p3QHHBYxK8JVrQzgxApZ8Prbu/exec';
 
 const MOCK = GAS_URL === '';
 const EXPORT_WIDTH = 600;          // 送出圖片寬度(px)
@@ -244,6 +244,7 @@ $('resetBtn').addEventListener('click', () => {
   role = null; secret = null;
   loadSeq++; loading = false;   // 丟棄舊身分還在進行中的讀取
   $('loadingMsg').classList.add('hidden');
+  applyIdentity();   // 清掉頁首「你是…」
   showLatest(null, null);
   clearBoard();
   hideStatus();
