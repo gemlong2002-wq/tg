@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="手寫黑板">
+<meta name="theme-color" content="#1f3d2b">
+<title>手寫黑板</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<style>
+  :root {
+    --board: #1f3d2b;
+    --board-dark: #16301f;
+    --frame: #6b4a2b;
+    --chalk: #f4f1e8;
+    --muted: #b9c4b5;
+    --danger: #ff8a7a;
+    --accent: #f2d16b;
+    --bg: #12241a;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--bg); color: var(--chalk);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", sans-serif;
+    overscroll-behavior: none;
+  }
+  body { display: flex; flex-direction: column; height: 100dvh; overflow: hidden;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  button { font: inherit; cursor: pointer; border: none; border-radius: 10px; padding: 10px 16px; }
+  button:disabled { opacity: .5; cursor: default; }
+  .btn-primary { background: var(--accent); color: #2a2208; font-weight: 600; }
+  .btn-ghost { background: transparent; color: var(--chalk); border: 1px solid rgba(244,241,232,.35); }
+  .hidden { display: none !important; }
+
+  /* 頂部列 */
+  header { display: flex; align-items: center; gap: 8px; padding: 8px 16px; font-size: 14px; }
+  header .who { flex: 1; color: var(--muted); }
+  .badge { background: var(--accent); color: #2a2208; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+  header button { padding: 4px 10px; font-size: 13px; }
+
+  /* 上半部:收到的圖 */
+  #inbox { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; padding: 0 16px 8px; }
+  #inbox h2 { margin: 0 0 6px; font-size: 15px; font-weight: 600; display: flex; justify-content: space-between; align-items: baseline; }
+  #inbox h2 small { font-weight: 400; color: var(--muted); font-size: 12px; }
+  .frame { flex: 1; min-height: 0; border: 6px solid var(--frame); border-radius: 8px; background: var(--board);
+    display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; }
+  #latestImg { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+  #emptyMsg { color: var(--muted); }
+  #loadingMsg { position: absolute; top: 6px; right: 8px; font-size: 12px; color: var(--muted); }
+
+  /* 狀態/錯誤列 */
+  #status { margin: 0 16px; height: 56px; overflow: hidden; padding: 6px 12px; border-radius: 8px; font-size: 14px; display: flex; align-items: center; gap: 10px; }
+  #status.idle { visibility: hidden; }
+  #status.error { background: rgba(255,138,122,.15); color: var(--danger); border: 1px solid rgba(255,138,122,.5); }
+  #status.info { background: rgba(242,209,107,.12); color: var(--accent); }
+  #status .text { flex: 1; font-size: 13px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  #status button { padding: 6px 12px; font-size: 13px; flex: none; }
+
+  /* 下半部:畫布 */
+  #composer { flex: 1.2 1 0; min-height: 0; display: flex; flex-direction: column; padding: 8px 16px 12px; }
+  #composer h2 { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
+  #canvasWrap { flex: 1; min-height: 0; border: 6px solid var(--frame); border-radius: 8px; background: var(--board); position: relative; }
+  #board { width: 100%; height: 100%; display: block; touch-action: none; -webkit-user-select: none; user-select: none; }
+  .actions { display: flex; gap: 10px; margin-top: 10px; }
+  .actions button { flex: 1; padding: 12px; font-size: 16px; }
+
+  /* 首次設定 */
+  #setup { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 10; }
+  #setup .card { width: 100%; max-width: 360px; background: var(--board); border: 6px solid var(--frame); border-radius: 12px; padding: 20px; }
+  #setup h1 { margin: 0 0 4px; font-size: 22px; }
+  #setup p { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
+  .roles { display: flex; gap: 10px; margin-bottom: 14px; }
+  .roles button { flex: 1; padding: 14px; font-size: 17px; background: var(--board-dark); color: var(--chalk); border: 2px solid transparent; }
+  .roles button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  #setup label { display: block; font-size: 14px; margin-bottom: 6px; }
+  #secretInput { width: 100%; padding: 12px; font-size: 16px; border-radius: 10px; border: 1px solid rgba(244,241,232,.35); background: var(--board-dark); color: var(--chalk); }
+  #setupError { color: var(--danger); font-size: 14px; min-height: 20px; margin: 8px 0; }
+  #setup .btn-primary { width: 100%; padding: 14px; font-size: 17px; }
+</style>
+</head>
+<body>
+
+<!-- 首次設定 / 重設身分 -->
+<div id="setup" class="hidden">
+  <div class="card">
+    <h1>手寫黑板</h1>
+    <p>第一次使用,請選擇你的身分並輸入共用通關碼。</p>
+    <div class="roles">
+      <button type="button" data-role="husband" aria-pressed="false">老公</button>
+      <button type="button" data-role="wife" aria-pressed="false">老婆</button>
+    </div>
+    <label for="secretInput">共用通關碼</label>
+    <input id="secretInput" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <div id="setupError"></div>
+    <button type="button" id="setupDone" class="btn-primary">開始使用</button>
+  </div>
+</div>
+
+<header>
+  <span id="mockBadge" class="badge hidden">測試模式</span>
+  <span class="who" id="whoLabel"></span>
+  <button type="button" id="resetBtn" class="btn-ghost">重設身分</button>
+</header>
+
+<section id="inbox">
+  <h2><span id="inboxTitle">對方傳給我的最新一張</span><small id="latestTs"></small></h2>
+  <div class="frame">
+    <img id="latestImg" class="hidden" alt="對方傳來的黑板圖">
+    <span id="emptyMsg">還沒有訊息</span>
+    <span id="loadingMsg" class="hidden">更新中…</span>
+  </div>
+</section>
+
+<div id="status" class="idle" role="status" aria-live="polite">
+  <span class="text"></span>
+  <button type="button" id="retryBtn" class="btn-primary hidden">重試</button>
+</div>
+
+<section id="composer">
+  <h2>畫給對方</h2>
+  <div id="canvasWrap"><canvas id="board"></canvas></div>
+  <div class="actions">
+    <button type="button" id="clearBtn" class="btn-ghost">清除</button>
+    <button type="button" id="sendBtn" class="btn-primary">送出</button>
+  </div>
+</section>
+
+<script>
+// ===== 設定 =====
+// 部署 GAS 後,把網頁應用程式網址貼在這裡。留空 = 測試模式(用本機 localStorage 模擬後端)。
+const GAS_URL = '';
+
+const MOCK = GAS_URL === '';
+const EXPORT_WIDTH = 600;          // 送出圖片寬度(px)
+const REQUEST_TIMEOUT_MS = 20000;
+const LS = { role: 'tg_role', secret: 'tg_secret' };
+const ROLE_NAME = { husband: '老公', wife: '老婆' };
+const OTHER = { husband: 'wife', wife: 'husband' };
+
+// ===== 後端:真實 GAS 或 MOCK =====
+async function callBackend(payload) {
+  if (MOCK) return mockBackend(payload);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    // 用 text/plain 送 JSON,避免瀏覽器 CORS 預檢(GAS 不支援 OPTIONS)
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) throw new Error('伺服器回應 ' + res.status);
+    let data;
+    try { data = await res.json(); } catch { throw new Error('伺服器回應格式錯誤'); }
+    if (!data.ok) throw new Error(errorText(data.error));
+    return data;
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error('連線逾時');
+    if (err instanceof TypeError) throw new Error('網路連線失敗');
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function errorText(code) {
+  return ({
+    unauthorized: '通關碼錯誤,請按「重設身分」重新輸入',
+    server_not_configured: '後端尚未設定通關碼',
+    bad_role: '身分資料錯誤',
+    bad_image: '圖片資料錯誤',
+    image_too_large: '圖片太大',
+    unknown_action: '未知的操作',
+  })[code] || ('伺服器錯誤:' + (code || '未知'));
+}
+
+// MOCK:資料存在 localStorage 的 mock_latest_to_husband / mock_latest_to_wife。
+// 模擬失敗:網址加 ?mockfail=read 或 ?mockfail=send(或兩者 ?mockfail=read,send)。
+function mockBackend(payload) {
+  const fails = (new URLSearchParams(location.search).get('mockfail') || '').split(',');
+  return new Promise((resolve, reject) => {
+    setTimeout(() => {
+      try {
+        if (payload.action === 'getLatest') {
+          if (fails.includes('read')) return reject(new Error('(模擬)讀取失敗'));
+          const raw = localStorage.getItem('mock_latest_to_' + payload.role);
+          const rec = raw ? JSON.parse(raw) : null;
+          return resolve({ ok: true, image: rec ? rec.image : null, ts: rec ? rec.ts : null });
+        }
+        if (payload.action === 'saveDrawing') {
+          if (fails.includes('send')) return reject(new Error('(模擬)送出失敗'));
+          const ts = Date.now();
+          localStorage.setItem('mock_latest_to_' + OTHER[payload.role], JSON.stringify({ image: payload.image, ts }));
+          return resolve({ ok: true, ts });
+        }
+        reject(new Error('未知的操作'));
+      } catch (err) { reject(err); }
+    }, 300);
+  });
+}
+
+// ===== 身分設定 =====
+const $ = (id) => document.getElementById(id);
+let role = localStorage.getItem(LS.role);
+let secret = localStorage.getItem(LS.secret);
+let pickedRole = null;
+
+function showSetup() {
+  pickedRole = null;
+  document.querySelectorAll('.roles button').forEach(b => b.setAttribute('aria-pressed', 'false'));
+  $('secretInput').value = '';
+  $('setupError').textContent = '';
+  $('setup').classList.remove('hidden');
+}
+
+document.querySelectorAll('.roles button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    pickedRole = btn.dataset.role;
+    document.querySelectorAll('.roles button').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+  });
+});
+
+$('setupDone').addEventListener('click', () => {
+  const s = $('secretInput').value.trim();
+  if (!pickedRole) { $('setupError').textContent = '請選擇身分'; return; }
+  if (!s) { $('setupError').textContent = '請輸入通關碼'; return; }
+  role = pickedRole; secret = s;
+  localStorage.setItem(LS.role, role);
+  localStorage.setItem(LS.secret, secret);
+  $('setup').classList.add('hidden');
+  applyIdentity();
+  loadLatest();
+});
+
+$('resetBtn').addEventListener('click', () => {
+  localStorage.removeItem(LS.role);
+  localStorage.removeItem(LS.secret);
+  role = null; secret = null;
+  loadSeq++; loading = false;   // 丟棄舊身分還在進行中的讀取
+  $('loadingMsg').classList.add('hidden');
+  showLatest(null, null);
+  clearBoard();
+  hideStatus();
+  showSetup();
+});
+
+function applyIdentity() {
+  $('whoLabel').textContent = role ? '我是' + ROLE_NAME[role] : '';
+  $('inboxTitle').textContent = role ? ROLE_NAME[OTHER[role]] + '傳給我的最新一張' : '對方傳給我的最新一張';
+}
+
+// ===== 狀態列(錯誤 + 重試) =====
+let retryAction = null;
+let statusTimer = null;
+function showStatus(text, kind, onRetry) {
+  const box = $('status');
+  clearTimeout(statusTimer);
+  if (kind === 'info') statusTimer = setTimeout(() => { if ($('status').className === 'info') hideStatus(); }, 3000);
+  box.className = kind;
+  box.querySelector('.text').textContent = text;
+  retryAction = onRetry || null;
+  $('retryBtn').classList.toggle('hidden', !onRetry);
+  $('retryBtn').disabled = false;
+}
+function hideStatus() { $('status').className = 'idle'; retryAction = null; }
+$('retryBtn').addEventListener('click', () => { if (retryAction) { $('retryBtn').disabled = true; retryAction(); } });
+
+// ===== 讀取對方最新一張 =====
+let loading = false;
+let loadSeq = 0;
+function formatTs(ts) {
+  const d = new Date(Number(ts));
+  if (isNaN(d)) return '';
+  return d.toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+function showLatest(image, ts) {
+  const img = $('latestImg');
+  if (image) {
+    img.src = image.startsWith('data:') ? image : 'data:image/png;base64,' + image;
+    img.classList.remove('hidden');
+    $('emptyMsg').classList.add('hidden');
+    $('latestTs').textContent = ts ? '送出時間 ' + formatTs(ts) : '';
+  } else {
+    img.removeAttribute('src');
+    img.classList.add('hidden');
+    $('emptyMsg').classList.remove('hidden');
+    $('latestTs').textContent = '';
+  }
+}
+async function loadLatest() {
+  if (!role || !secret || loading) return;
+  loading = true;
+  const seq = ++loadSeq;
+  $('loadingMsg').classList.remove('hidden');
+  try {
+    const data = await callBackend({ action: 'getLatest', role, secret });
+    if (seq !== loadSeq) return;
+    showLatest(data.image, data.ts);
+    if (retryAction === loadLatest) hideStatus();
+  } catch (err) {
+    if (seq !== loadSeq) return;
+    showStatus('讀取失敗:' + err.message, 'error', loadLatest);
+  } finally {
+    if (seq === loadSeq) {
+      loading = false;
+      $('loadingMsg').classList.add('hidden');
+    }
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') loadLatest();
+});
+
+// ===== 黑板畫布 =====
+const canvas = $('board');
+const ctx = canvas.getContext('2d');
+const BOARD_COLOR = getComputedStyle(document.documentElement).getPropertyValue('--board').trim();
+const CHALK_COLOR = 'rgba(244,241,232,0.92)';
+let dirty = false;      // 畫布上有沒有筆畫
+let drawing = false;
+let last = null;
+
+function setupStroke() {
+  const dpr = window.devicePixelRatio || 1;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = CHALK_COLOR;
+  ctx.lineWidth = 4;
+  ctx.shadowColor = 'rgba(244,241,232,0.5)';
+  ctx.shadowBlur = 1.5;
+}
+function fillBoard() {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = BOARD_COLOR;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
+}
+function resizeCanvas() {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(rect.width * dpr));
+  const h = Math.max(1, Math.round(rect.height * dpr));
+  if (w === canvas.width && h === canvas.height) return;
+  // 保留既有筆畫(例如手機轉向)
+  let keep = null;
+  if (dirty) { keep = document.createElement('canvas'); keep.width = canvas.width; keep.height = canvas.height; keep.getContext('2d').drawImage(canvas, 0, 0); }
+  canvas.width = w; canvas.height = h;
+  fillBoard();
+  if (keep) ctx.drawImage(keep, 0, 0);
+  setupStroke();
+}
+function clearBoard() { fillBoard(); dirty = false; }
+
+function pos(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+canvas.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  if (sending) return;   // 送出中不接受新筆畫,避免送出成功清畫布時被一起清掉
+  try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* 非真實指標時忽略 */ }
+  if ($('status').className === 'info') hideStatus();
+  drawing = true;
+  last = pos(e);
+  // 點一下也畫出一個點
+  ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(last.x + 0.01, last.y + 0.01); ctx.stroke();
+  dirty = true;
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (!drawing) return;
+  e.preventDefault();
+  const coalesced = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+  const events = coalesced.length ? coalesced : [e];
+  ctx.beginPath();
+  ctx.moveTo(last.x, last.y);
+  for (const ev of events) { const p = pos(ev); ctx.lineTo(p.x, p.y); last = p; }
+  ctx.stroke();
+});
+const endStroke = () => { drawing = false; last = null; };
+canvas.addEventListener('pointerup', endStroke);
+canvas.addEventListener('pointercancel', endStroke);
+// iOS Safari 保險:在畫布上的觸控一律不捲動頁面
+['touchstart', 'touchmove'].forEach(t => canvas.addEventListener(t, (e) => e.preventDefault(), { passive: false }));
+
+// 狀態列出現/消失也會改變畫布大小,所以監看畫布本身而不只是視窗
+if (window.ResizeObserver) new ResizeObserver(resizeCanvas).observe(canvas);
+else window.addEventListener('resize', resizeCanvas);
+
+$('clearBtn').addEventListener('click', () => { clearBoard(); hideStatus(); });
+
+// ===== 送出 =====
+let sending = false;
+function exportImage() {
+  const scale = EXPORT_WIDTH / canvas.width;
+  const out = document.createElement('canvas');
+  out.width = EXPORT_WIDTH;
+  out.height = Math.max(1, Math.round(canvas.height * scale));
+  const octx = out.getContext('2d');
+  octx.fillStyle = BOARD_COLOR;
+  octx.fillRect(0, 0, out.width, out.height);
+  octx.imageSmoothingQuality = 'high';
+  octx.drawImage(canvas, 0, 0, out.width, out.height);
+  return out.toDataURL('image/png').split(',')[1];   // 只送 base64 本體
+}
+async function sendDrawing() {
+  if (sending) return;
+  if (!dirty) { showStatus('畫布是空的,先畫點什麼再送出吧', 'info'); return; }
+  sending = true;
+  $('sendBtn').disabled = true; $('clearBtn').disabled = true; $('resetBtn').disabled = true;
+  $('sendBtn').textContent = '送出中…';
+  const recipient = ROLE_NAME[OTHER[role]];
+  try {
+    const image = exportImage();
+    window.__lastPayloadBytes = JSON.stringify({ action: 'saveDrawing', role, secret, image }).length; // 供驗收量測
+    await callBackend({ action: 'saveDrawing', role, secret, image });
+    clearBoard();
+    showStatus('已送出給' + recipient + '!', 'info');
+  } catch (err) {
+    showStatus('送出失敗:' + err.message + '(圖還在,可以重試)', 'error', sendDrawing);
+  } finally {
+    sending = false;
+    $('sendBtn').disabled = false; $('clearBtn').disabled = false; $('resetBtn').disabled = false;
+    $('sendBtn').textContent = '送出';
+  }
+}
+$('sendBtn').addEventListener('click', sendDrawing);
+
+// ===== 啟動 =====
+if (MOCK) $('mockBadge').classList.remove('hidden');
+resizeCanvas();
+applyIdentity();
+if (role && secret) loadLatest(); else showSetup();
+</script>
+</body>
+</html>
